@@ -1,4 +1,3 @@
-# Importing packages
 import os
 import nextcord
 from nextcord.ext import commands, tasks
@@ -14,6 +13,7 @@ if not YOUTUBE_API_KEY:
 youtube = build('youtube', 'v3', developerKey=YOUTUBE_API_KEY)
 
 tracked_channels = {}
+last_live_streams = {}  # Store the last live stream video ID for each channel
 
 def get_channel_id_from_username(username):
     try:
@@ -104,6 +104,7 @@ async def remove_channel(interaction: nextcord.Interaction):
         async def callback(self, interaction: nextcord.Interaction):
             selected_channel_id = self.values[0]
             tracked_channels[guild_id].remove(selected_channel_id)
+            last_live_streams.pop(selected_channel_id, None)  # Remove last live stream ID when channel is removed
             channel_name = get_channel_name(selected_channel_id)
             await interaction.response.send_message(f"Removed YouTube channel: {channel_name or 'Unknown Channel'}")
             print(f"Removed channel {channel_name or selected_channel_id} for guild {guild_id}")
@@ -146,10 +147,11 @@ def check_live_stream(channel_id):
             stream_title = stream['snippet']['title']
             stream_thumbnail = stream['snippet']['thumbnails']['high']['url']
             stream_url = f"https://www.youtube.com/watch?v={stream['id']['videoId']}"
-            return (True, stream_title, stream_thumbnail, stream_url)
+            video_id = stream['id']['videoId']
+            return (True, stream_title, stream_thumbnail, stream_url, video_id)
     except Exception as e:
         print(f"Error fetching live stream data: {e}")
-    return (False, None, None, None)
+    return (False, None, None, None, None)
 
 @tasks.loop(minutes=3)
 async def check_streams():
@@ -157,10 +159,18 @@ async def check_streams():
     for guild_id, channels in tracked_channels.items():
         for channel_id in channels:
             print(f"Checking channel {channel_id} for guild {guild_id}")
-            is_live, stream_title, stream_thumbnail, stream_url = check_live_stream(channel_id)
+            is_live, stream_title, stream_thumbnail, stream_url, video_id = check_live_stream(channel_id)
+
+            if not is_live:
+                last_live_streams[channel_id] = None  # Reset if the stream is no longer live
+                continue
+
+            if last_live_streams.get(channel_id) == video_id:
+                continue  # Skip if the stream is already notified
 
             guild = bot.get_guild(guild_id)
             if guild and is_live:
+                last_live_streams[channel_id] = video_id  # Store the current video ID
                 print(f"Channel {channel_id} is live with title: {stream_title}")
                 embed = nextcord.Embed(
                     title=f"{stream_title} is live!",
