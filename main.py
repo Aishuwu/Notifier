@@ -13,7 +13,7 @@ if not YOUTUBE_API_KEY:
 youtube = build('youtube', 'v3', developerKey=YOUTUBE_API_KEY)
 
 tracked_channels = {}
-last_live_streams = {}  # Store the last live stream video ID for each channel
+last_live_streams = {}
 
 def get_channel_id_from_username(username):
     try:
@@ -55,11 +55,13 @@ def get_channel_name(channel_id):
 
 @bot.slash_command(name="add_channel", description="Add a YouTube channel (by ID or username) to track for live streams.")
 async def add_channel(interaction: nextcord.Interaction, input_str: str):
+    await interaction.response.defer()  # Acknowledge the interaction to avoid timeout
+
     guild_id = interaction.guild.id
     channel_id = get_channel_id(input_str)
 
     if not channel_id:
-        await interaction.response.send_message(f"Error: Unable to find channel by the input '{input_str}'. Please check the channel ID or username.")
+        await interaction.followup.send(f"Error: Unable to find channel by the input '{input_str}'. Please check the channel ID or username.")
         return
 
     if guild_id not in tracked_channels:
@@ -69,19 +71,21 @@ async def add_channel(interaction: nextcord.Interaction, input_str: str):
         channel_name = get_channel_name(channel_id)
         if channel_name:
             tracked_channels[guild_id].append(channel_id)
-            await interaction.response.send_message(f"Now tracking YouTube channel: {channel_name}")
+            await interaction.followup.send(f"Now tracking YouTube channel: {channel_name}")
             print(f"Tracking channel {channel_name} (ID: {channel_id}) for guild {guild_id}")
         else:
-            await interaction.response.send_message("Error: Unable to retrieve the channel name. Please check the channel ID or username.")
+            await interaction.followup.send("Error: Unable to retrieve the channel name. Please check the channel ID or username.")
     else:
-        await interaction.response.send_message(f"Channel {channel_id} is already being tracked.")
+        await interaction.followup.send(f"Channel {channel_id} is already being tracked.")
 
 @bot.slash_command(name="remove_channel", description="Remove a YouTube channel from tracking.")
 async def remove_channel(interaction: nextcord.Interaction):
+    await interaction.response.defer()  # Acknowledge the interaction
+
     guild_id = interaction.guild.id
 
     if guild_id not in tracked_channels or len(tracked_channels[guild_id]) == 0:
-        await interaction.response.send_message("No channels are currently being tracked.")
+        await interaction.followup.send("No channels are currently being tracked.")
         return
 
     options = []
@@ -104,17 +108,19 @@ async def remove_channel(interaction: nextcord.Interaction):
         async def callback(self, interaction: nextcord.Interaction):
             selected_channel_id = self.values[0]
             tracked_channels[guild_id].remove(selected_channel_id)
-            last_live_streams.pop(selected_channel_id, None)  # Remove last live stream ID when channel is removed
+            last_live_streams.pop(selected_channel_id, None)
             channel_name = get_channel_name(selected_channel_id)
-            await interaction.response.send_message(f"Removed YouTube channel: {channel_name or 'Unknown Channel'}")
+            await interaction.followup.send(f"Removed YouTube channel: {channel_name or 'Unknown Channel'}")
             print(f"Removed channel {channel_name or selected_channel_id} for guild {guild_id}")
 
     view = nextcord.ui.View()
     view.add_item(ChannelSelect())
-    await interaction.response.send_message("Select a channel to remove:", view=view)
+    await interaction.followup.send("Select a channel to remove:", view=view)
 
 @bot.slash_command(name="list_channels", description="List all YouTube channels being tracked.")
 async def list_channels(interaction: nextcord.Interaction):
+    await interaction.response.defer()  # Acknowledge the interaction
+
     guild_id = interaction.guild.id
 
     if guild_id in tracked_channels and len(tracked_channels[guild_id]) > 0:
@@ -127,9 +133,9 @@ async def list_channels(interaction: nextcord.Interaction):
                 channel_names.append(f"Unknown Channel (ID: {channel_id})")
 
         channels_list = "\n".join(channel_names)
-        await interaction.response.send_message(f"Currently tracking these channels:\n{channels_list}")
+        await interaction.followup.send(f"Currently tracking these channels:\n{channels_list}")
     else:
-        await interaction.response.send_message("No channels are currently being tracked.")
+        await interaction.followup.send("No channels are currently being tracked.")
 
 def check_live_stream(channel_id):
     try:
@@ -162,15 +168,15 @@ async def check_streams():
             is_live, stream_title, stream_thumbnail, stream_url, video_id = check_live_stream(channel_id)
 
             if not is_live:
-                last_live_streams[channel_id] = None  # Reset if the stream is no longer live
+                last_live_streams[channel_id] = None
                 continue
 
             if last_live_streams.get(channel_id) == video_id:
-                continue  # Skip if the stream is already notified
+                continue
 
             guild = bot.get_guild(guild_id)
             if guild and is_live:
-                last_live_streams[channel_id] = video_id  # Store the current video ID
+                last_live_streams[channel_id] = video_id
                 print(f"Channel {channel_id} is live with title: {stream_title}")
                 embed = nextcord.Embed(
                     title=f"{stream_title} is live!",
