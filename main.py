@@ -151,12 +151,12 @@ async def add_channel(interaction: nextcord.Interaction, channel_name: str, cont
                 return
             tracked_channels['youtube'].setdefault(guild_id, []).append(channel_id)
             tracked_types[channel_id] = content_type.lower()
-            await interaction.followup.send(f"Now tracking YouTube channel: {channel_name} for {content_type}")
+            await interaction.followup.send(f"Now tracking YouTube channel: {channel_name} on YouTube for {content_type}")
 
         # Handle Twitch channel
         elif platform == 'twitch':
             tracked_channels['twitch'].setdefault(guild_id, []).append(channel_name.lower())
-            await interaction.followup.send(f"Now tracking Twitch channel: {channel_name}")
+            await interaction.followup.send(f"Now tracking Twitch channel: {channel_name} on Twitch")
 
         # Invalid platform (this shouldn't occur with dropdown, but just in case)
         else:
@@ -183,6 +183,46 @@ async def channel_stats(interaction: nextcord.Interaction, channel_name: str):
         views = stats['viewCount']
         videos = stats['videoCount']
         await interaction.followup.send(f"{channel_name} has {subs} subscribers, {views} views, and {videos} videos.")
+
+# Slash command to list tracked YouTube and Twitch channels
+@bot.slash_command(name="list_channels", description="List all YouTube and Twitch channels being tracked.")
+async def list_channels(interaction: nextcord.Interaction):
+    guild_id = interaction.guild.id
+    tracked_youtube = tracked_channels.get('youtube', {}).get(guild_id, [])
+    tracked_twitch = tracked_channels.get('twitch', {}).get(guild_id, [])
+
+    if not tracked_youtube and not tracked_twitch:
+        await interaction.response.send_message("No channels are currently being tracked.")
+        return
+
+    youtube_channels = "\n".join(tracked_youtube) if tracked_youtube else "None"
+    twitch_channels = "\n".join(tracked_twitch) if tracked_twitch else "None"
+    await interaction.response.send_message(f"**YouTube Channels:**\n{youtube_channels}\n\n**Twitch Channels:**\n{twitch_channels}")
+
+# Slash command to remove a YouTube or Twitch channel
+@bot.slash_command(name="remove_channel", description="Remove a YouTube or Twitch channel from tracking.")
+async def remove_channel(interaction: nextcord.Interaction, platform: str, channel_name: str):
+    await interaction.response.defer()
+
+    guild_id = interaction.guild.id
+    platform = platform.lower()
+
+    if platform == 'youtube' and guild_id in tracked_channels['youtube']:
+        if channel_name in tracked_channels['youtube'][guild_id]:
+            tracked_channels['youtube'][guild_id].remove(channel_name)
+            await interaction.followup.send(f"Removed YouTube channel: {channel_name}")
+        else:
+            await interaction.followup.send(f"Channel {channel_name} is not being tracked.")
+
+    elif platform == 'twitch' and guild_id in tracked_channels['twitch']:
+        if channel_name.lower() in tracked_channels['twitch'][guild_id]:
+            tracked_channels['twitch'][guild_id].remove(channel_name.lower())
+            await interaction.followup.send(f"Removed Twitch channel: {channel_name}")
+        else:
+            await interaction.followup.send(f"Channel {channel_name} is not being tracked.")
+    
+    else:
+        await interaction.followup.send(f"No {platform} channel named '{channel_name}' found in tracking.")
 
 # Command to customize notification messages
 @bot.slash_command(name="set_notification_message", description="Customize the notification message.")
