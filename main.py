@@ -63,7 +63,7 @@ def check_twitch_stream(channel_name):
         return (True, stream_title, stream_thumbnail, stream_url)
     return (False, None, None, None)
 
-# Function to check YouTube video uploads (including shorts)
+# Function to check for new YouTube video uploads
 def check_video_uploads(channel_id):
     try:
         request = youtube.search().list(
@@ -85,7 +85,7 @@ def check_video_uploads(channel_id):
         print(f"Error fetching video upload data: {e}")
     return (False, None, None, None, None)
 
-# Function to check if YouTube video is a short
+# Function to get video details (such as duration) from YouTube
 def check_video_details(video_id):
     try:
         request = youtube.videos().list(
@@ -100,6 +100,7 @@ def check_video_details(video_id):
         print(f"Error fetching video details: {e}")
     return None
 
+# Function to check if a video is a short (less than 60 seconds)
 def is_short(duration):
     if duration and 'PT' in duration:
         minutes = re.search(r'(\d+)M', duration)
@@ -107,24 +108,6 @@ def is_short(duration):
         if not minutes and seconds and int(seconds.group(1)) <= 60:
             return True
     return False
-
-# Function to get YouTube channel details
-def get_channel_id(channel_name):
-    try:
-        request = youtube.search().list(
-            part="snippet",
-            q=channel_name,
-            type="channel",
-            maxResults=1
-        )
-        response = request.execute()
-        if 'items' in response and len(response['items']) > 0:
-            channel_id = response['items'][0]['snippet']['channelId']
-            channel_title = response['items'][0]['snippet']['title']
-            return channel_id, channel_title
-    except Exception as e:
-        print(f"Error fetching channel ID: {e}")
-    return None, None
 
 # Set custom notification channel
 @bot.slash_command(name="set_notification_channel", description="Set the channel where notifications will be sent.")
@@ -135,7 +118,7 @@ async def set_notification_channel(interaction: nextcord.Interaction, channel: n
 
 # Slash command to add a YouTube or Twitch channel
 @bot.slash_command(name="add_channel", description="Add a YouTube or Twitch channel to track.")
-async def add_channel(interaction: nextcord.Interaction, platform: str, channel_name: str, content_type: str = 'all'):
+async def add_channel(interaction: nextcord.Interaction, platform: str, channel_name: str):
     await interaction.response.defer()
 
     guild_id = interaction.guild.id
@@ -144,13 +127,12 @@ async def add_channel(interaction: nextcord.Interaction, platform: str, channel_
     try:
         # Handle YouTube channel
         if platform == 'youtube':
-            channel_id, channel_title = get_channel_id(channel_name)
+            channel_id, channel_title = get_youtube_channel(channel_name)
             if not channel_id:
                 await interaction.followup.send(f"Error: Unable to find YouTube channel '{channel_name}'.")
                 return
             tracked_channels['youtube'].setdefault(guild_id, []).append({'id': channel_id, 'title': channel_title})
-            tracked_types[channel_id] = content_type.lower()
-            await interaction.followup.send(f"Now tracking YouTube channel: {channel_title} for {content_type}")
+            await interaction.followup.send(f"Now tracking YouTube channel: {channel_title}")
 
         # Handle Twitch channel
         elif platform == 'twitch':
@@ -182,26 +164,47 @@ async def list_channels(interaction: nextcord.Interaction):
     twitch_channels = "\n".join(tracked_twitch) if tracked_twitch else "None"
     await interaction.response.send_message(f"**YouTube Channels:**\n{youtube_channels}\n\n**Twitch Channels:**\n{twitch_channels}")
 
-# Slash command to remove a YouTube or Twitch channel
+# Custom Select menu for removing a channel
+class RemoveChannelSelect(nextcord.ui.Select):
+    def __init__(self, guild_id, youtube_channels, twitch_channels):
+        options = []
+
+        for channel in youtube_channels:
+            options.append(nextcord.SelectOption(label=channel['title'], description="YouTube", value=f"youtube|{channel['id']}"))
+
+        for channel_name in twitch_channels:
+            options.append(nextcord.SelectOption(label=channel_name, description="Twitch", value=f"twitch|{channel_name}"))
+
+        super().__init__(placeholder="Select a channel to remove...", options=options)
+
+    async def callback(self, interaction: nextcord.Interaction):
+        guild_id = interaction.guild.id
+        selected_value = self.values[0]
+        platform, channel_id_or_name = selected_value.split("|")
+
+        if platform == "youtube":
+            tracked_channels['youtube'][guild_id] = [ch for ch in tracked_channels['youtube'][guild_id] if ch['id'] != channel_id_or_name]
+            await interaction.followup.send(f"Removed YouTube channel with ID: {channel_id_or_name}")
+        elif platform == "twitch":
+            tracked_channels['twitch'][guild_id].remove(channel_id_or_name)
+            await interaction.followup.send(f"Removed Twitch channel: {channel_id_or_name}")
+
+# Slash command to remove a YouTube or Twitch channel using a dropdown
 @bot.slash_command(name="remove_channel", description="Remove a YouTube or Twitch channel from tracking.")
-async def remove_channel(interaction: nextcord.Interaction, platform: str, channel_name: str):
-    await interaction.response.defer()
-
+async def remove_channel(interaction: nextcord.Interaction):
     guild_id = interaction.guild.id
-    platform = platform.lower()
 
-    try:
-        if platform == 'youtube':
-            tracked_channels['youtube'][guild_id] = [ch for ch in tracked_channels['youtube'].get(guild_id, []) if ch['title'] != channel_name]
-            await interaction.followup.send(f"Removed YouTube channel: {channel_name}")
-        elif platform == 'twitch':
-            tracked_channels['twitch'][guild_id].remove(channel_name.lower())
-            await interaction.followup.send(f"Removed Twitch channel: {channel_name}")
-        else:
-            await interaction.followup.send(f"Invalid platform: {platform}")
+    youtube_channels = tracked_channels.get('youtube', {}).get(guild_id, [])
+    twitch_channels = tracked_channels.get('twitch', {}).get(guild_id, [])
 
-    except ValueError:
-        await interaction.followup.send(f"Channel {channel_name} is not currently being tracked.")
+    if not youtube_channels and not twitch_channels:
+        await interaction.response.send_message("No channels are currently being tracked.")
+        return
+
+    view = nextcord.ui.View()
+    view.add_item(RemoveChannelSelect(guild_id, youtube_channels, twitch_channels))
+
+    await interaction.response.send_message("Select the channel you want to remove:", view=view)
 
 # Command to customize notification messages
 @bot.slash_command(name="set_notification_message", description="Customize the notification message.")
