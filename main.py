@@ -8,24 +8,21 @@ from googleapiclient.discovery import build
 intents = nextcord.Intents.default()
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# YouTube API setup
 YOUTUBE_API_KEY = os.getenv('YOUTUBE_API_KEY')
 if not YOUTUBE_API_KEY:
     print("Error: YOUTUBE_API_KEY is missing!")
 youtube = build('youtube', 'v3', developerKey=YOUTUBE_API_KEY)
 
-# Twitch API setup
 TWITCH_CLIENT_ID = os.getenv('TWITCH_CLIENT_ID')
 TWITCH_CLIENT_SECRET = os.getenv('TWITCH_CLIENT_SECRET')
 TWITCH_OAUTH_TOKEN = None
 
 tracked_channels = {'youtube': {}, 'twitch': {}}
-notification_channels = {}  # Custom notification channels per guild
-tracked_types = {}  # Store content type tracking preferences
+notification_channels = {}  
+tracked_types = {}  
 last_live_streams = {}
-notification_messages = {}  # Store custom notification messages
+notification_messages = {}  
 
-# Function to get Twitch OAuth token
 def get_twitch_oauth_token():
     global TWITCH_OAUTH_TOKEN
     url = "https://id.twitch.tv/oauth2/token"
@@ -38,7 +35,6 @@ def get_twitch_oauth_token():
     data = response.json()
     TWITCH_OAUTH_TOKEN = data['access_token']
 
-# Function to check if Twitch stream is live
 def check_twitch_stream(channel_name):
     global TWITCH_OAUTH_TOKEN
     url = f"https://api.twitch.tv/helix/streams"
@@ -49,7 +45,7 @@ def check_twitch_stream(channel_name):
     params = {'user_login': channel_name}
 
     response = requests.get(url, headers=headers, params=params)
-    if response.status_code == 401:  # If token expired, refresh it
+    if response.status_code == 401:  
         get_twitch_oauth_token()
         headers['Authorization'] = f'Bearer {TWITCH_OAUTH_TOKEN}'
         response = requests.get(url, headers=headers, params=params)
@@ -63,7 +59,6 @@ def check_twitch_stream(channel_name):
         return (True, stream_title, stream_thumbnail, stream_url)
     return (False, None, None, None)
 
-# Function to check for new YouTube video uploads
 def check_video_uploads(channel_id):
     try:
         request = youtube.search().list(
@@ -85,7 +80,6 @@ def check_video_uploads(channel_id):
         print(f"Error fetching video upload data: {e}")
     return (False, None, None, None, None)
 
-# Function to get video details (such as duration) from YouTube
 def check_video_details(video_id):
     try:
         request = youtube.videos().list(
@@ -100,7 +94,6 @@ def check_video_details(video_id):
         print(f"Error fetching video details: {e}")
     return None
 
-# Function to check if a video is a short (less than 60 seconds)
 def is_short(duration):
     if duration and 'PT' in duration:
         minutes = re.search(r'(\d+)M', duration)
@@ -109,14 +102,12 @@ def is_short(duration):
             return True
     return False
 
-# Set custom notification channel
 @bot.slash_command(name="set_notification_channel", description="Set the channel where notifications will be sent.")
 async def set_notification_channel(interaction: nextcord.Interaction, channel: nextcord.TextChannel):
     guild_id = interaction.guild.id
     notification_channels[guild_id] = channel.id
     await interaction.response.send_message(f"Notifications will now be sent to {channel.mention}")
 
-# Slash command to add a YouTube or Twitch channel
 @bot.slash_command(name="add_channel", description="Add a YouTube or Twitch channel to track.")
 async def add_channel(interaction: nextcord.Interaction, platform: str, channel_name: str):
     await interaction.response.defer()
@@ -125,7 +116,6 @@ async def add_channel(interaction: nextcord.Interaction, platform: str, channel_
     platform = platform.lower()
 
     try:
-        # Handle YouTube channel
         if platform == 'youtube':
             channel_id, channel_title = get_youtube_channel(channel_name)
             if not channel_id:
@@ -134,12 +124,10 @@ async def add_channel(interaction: nextcord.Interaction, platform: str, channel_
             tracked_channels['youtube'].setdefault(guild_id, []).append({'id': channel_id, 'title': channel_title})
             await interaction.followup.send(f"Now tracking YouTube channel: {channel_title}")
 
-        # Handle Twitch channel
         elif platform == 'twitch':
             tracked_channels['twitch'].setdefault(guild_id, []).append(channel_name.lower())
             await interaction.followup.send(f"Now tracking Twitch channel: {channel_name}")
 
-        # Invalid platform
         else:
             await interaction.followup.send("Invalid platform. Please use 'youtube' or 'twitch'.")
 
@@ -147,7 +135,6 @@ async def add_channel(interaction: nextcord.Interaction, platform: str, channel_
         print(f"Error in add_channel: {e}")
         await interaction.followup.send("An error occurred while adding the channel. Please try again.")
 
-# Slash command to list tracked YouTube and Twitch channels
 @bot.slash_command(name="list_channels", description="List all YouTube and Twitch channels being tracked.")
 async def list_channels(interaction: nextcord.Interaction):
     guild_id = interaction.guild.id
@@ -164,7 +151,6 @@ async def list_channels(interaction: nextcord.Interaction):
     twitch_channels = "\n".join(tracked_twitch) if tracked_twitch else "None"
     await interaction.response.send_message(f"**YouTube Channels:**\n{youtube_channels}\n\n**Twitch Channels:**\n{twitch_channels}")
 
-# Custom Select menu for removing a channel
 class RemoveChannelSelect(nextcord.ui.Select):
     def __init__(self, guild_id, youtube_channels, twitch_channels):
         options = []
@@ -189,7 +175,6 @@ class RemoveChannelSelect(nextcord.ui.Select):
             tracked_channels['twitch'][guild_id].remove(channel_id_or_name)
             await interaction.followup.send(f"Removed Twitch channel: {channel_id_or_name}")
 
-# Slash command to remove a YouTube or Twitch channel using a dropdown
 @bot.slash_command(name="remove_channel", description="Remove a YouTube or Twitch channel from tracking.")
 async def remove_channel(interaction: nextcord.Interaction):
     guild_id = interaction.guild.id
@@ -206,14 +191,12 @@ async def remove_channel(interaction: nextcord.Interaction):
 
     await interaction.response.send_message("Select the channel you want to remove:", view=view)
 
-# Command to customize notification messages
 @bot.slash_command(name="set_notification_message", description="Customize the notification message.")
 async def set_notification_message(interaction: nextcord.Interaction, message: str):
     guild_id = interaction.guild.id
     notification_messages[guild_id] = message
     await interaction.followup.send("Notification message updated!")
 
-# Interactive Poll for Live Streams
 class Poll(nextcord.ui.View):
     def __init__(self):
         super().__init__()
@@ -232,7 +215,6 @@ async def poll(interaction: nextcord.Interaction):
     view = Poll()
     await interaction.response.send_message("Are you watching the stream?", view=view)
 
-# Task to check for video uploads, live streams, and Twitch streams
 @tasks.loop(minutes=3)
 async def check_streams():
     print("Checking for new YouTube uploads, live streams, and Twitch streams...")
@@ -247,7 +229,7 @@ async def check_streams():
                 continue
 
             if last_live_streams.get(channel_id) == video_id:
-                continue  # Skip if the video has already been notified
+                continue  
 
             guild = bot.get_guild(guild_id)
             if guild and is_video:
@@ -268,7 +250,7 @@ async def check_streams():
                 )
                 embed.set_image(url=video_thumbnail)
 
-                # Send notification to a custom or default channel
+                
                 channel = bot.get_channel(notification_channels.get(guild_id, guild.text_channels[0].id))
                 await channel.send(content=notification_messages.get(guild_id, "@everyone"), embed=embed)
 
@@ -297,7 +279,7 @@ async def ping(interaction: nextcord.Interaction):
 async def on_ready():
     print(f'Logged in as {bot.user.name}')
     await bot.change_presence(activity=nextcord.Activity(type=nextcord.ActivityType.watching, name="YouTube and Twitch streams"))
-    get_twitch_oauth_token()  # Get Twitch OAuth token on startup
+    get_twitch_oauth_token()  
     check_streams.start()
 
 DISCORD_BOT_TOKEN = os.getenv('DISCORD_BOT_TOKEN')
