@@ -108,6 +108,24 @@ def is_short(duration):
             return True
     return False
 
+# Function to get YouTube channel details
+def get_channel_id(channel_name):
+    try:
+        request = youtube.search().list(
+            part="snippet",
+            q=channel_name,
+            type="channel",
+            maxResults=1
+        )
+        response = request.execute()
+        if 'items' in response and len(response['items']) > 0:
+            channel_id = response['items'][0]['snippet']['channelId']
+            channel_title = response['items'][0]['snippet']['title']
+            return channel_id, channel_title
+    except Exception as e:
+        print(f"Error fetching channel ID: {e}")
+    return None, None
+
 # Set custom notification channel
 @bot.slash_command(name="set_notification_channel", description="Set the channel where notifications will be sent.")
 async def set_notification_channel(interaction: nextcord.Interaction, channel: nextcord.TextChannel):
@@ -115,74 +133,37 @@ async def set_notification_channel(interaction: nextcord.Interaction, channel: n
     notification_channels[guild_id] = channel.id
     await interaction.response.send_message(f"Notifications will now be sent to {channel.mention}")
 
-# Custom platform selection dropdown for adding channels
-class PlatformSelect(nextcord.ui.Select):
-    def __init__(self):
-        options = [
-            nextcord.SelectOption(label="YouTube", description="Track YouTube channel", value="youtube"),
-            nextcord.SelectOption(label="Twitch", description="Track Twitch channel", value="twitch")
-        ]
-        super().__init__(placeholder="Select the platform to track", min_values=1, max_values=1, options=options)
-
-    async def callback(self, interaction: nextcord.Interaction):
-        await interaction.response.send_message(f"Selected platform: {self.values[0]}")
-
-# Slash command to add a YouTube or Twitch channel with platform selection
+# Slash command to add a YouTube or Twitch channel
 @bot.slash_command(name="add_channel", description="Add a YouTube or Twitch channel to track.")
-async def add_channel(interaction: nextcord.Interaction, channel_name: str, content_type: str = 'all'):
+async def add_channel(interaction: nextcord.Interaction, platform: str, channel_name: str, content_type: str = 'all'):
     await interaction.response.defer()
 
-    # Add platform selection dropdown to interaction
-    view = nextcord.ui.View()
-    platform_select = PlatformSelect()
-    view.add_item(platform_select)
-    
-    await interaction.followup.send("Please select the platform:", view=view)
-    
-    platform = platform_select.values[0].lower()
     guild_id = interaction.guild.id
+    platform = platform.lower()
 
     try:
         # Handle YouTube channel
         if platform == 'youtube':
-            channel_id = get_channel_id(channel_name)
+            channel_id, channel_title = get_channel_id(channel_name)
             if not channel_id:
                 await interaction.followup.send(f"Error: Unable to find YouTube channel '{channel_name}'.")
                 return
-            tracked_channels['youtube'].setdefault(guild_id, []).append(channel_id)
+            tracked_channels['youtube'].setdefault(guild_id, []).append({'id': channel_id, 'title': channel_title})
             tracked_types[channel_id] = content_type.lower()
-            await interaction.followup.send(f"Now tracking YouTube channel: {channel_name} on YouTube for {content_type}")
+            await interaction.followup.send(f"Now tracking YouTube channel: {channel_title} for {content_type}")
 
         # Handle Twitch channel
         elif platform == 'twitch':
             tracked_channels['twitch'].setdefault(guild_id, []).append(channel_name.lower())
-            await interaction.followup.send(f"Now tracking Twitch channel: {channel_name} on Twitch")
+            await interaction.followup.send(f"Now tracking Twitch channel: {channel_name}")
 
-        # Invalid platform (this shouldn't occur with dropdown, but just in case)
+        # Invalid platform
         else:
             await interaction.followup.send("Invalid platform. Please use 'youtube' or 'twitch'.")
 
     except Exception as e:
         print(f"Error in add_channel: {e}")
         await interaction.followup.send("An error occurred while adding the channel. Please try again.")
-
-# Slash command to get YouTube channel statistics
-@bot.slash_command(name="channel_stats", description="Get statistics for a YouTube channel.")
-async def channel_stats(interaction: nextcord.Interaction, channel_name: str):
-    await interaction.response.defer()
-    channel_id = get_channel_id(channel_name)
-    if not channel_id:
-        await interaction.followup.send(f"Channel {channel_name} not found.")
-        return
-
-    request = youtube.channels().list(part="statistics", id=channel_id)
-    response = request.execute()
-    if 'items' in response and len(response['items']) > 0:
-        stats = response['items'][0]['statistics']
-        subs = stats['subscriberCount']
-        views = stats['viewCount']
-        videos = stats['videoCount']
-        await interaction.followup.send(f"{channel_name} has {subs} subscribers, {views} views, and {videos} videos.")
 
 # Slash command to list tracked YouTube and Twitch channels
 @bot.slash_command(name="list_channels", description="List all YouTube and Twitch channels being tracked.")
@@ -191,11 +172,13 @@ async def list_channels(interaction: nextcord.Interaction):
     tracked_youtube = tracked_channels.get('youtube', {}).get(guild_id, [])
     tracked_twitch = tracked_channels.get('twitch', {}).get(guild_id, [])
 
-    if not tracked_youtube and not tracked_twitch:
+    youtube_list = [channel['title'] for channel in tracked_youtube]
+
+    if not youtube_list and not tracked_twitch:
         await interaction.response.send_message("No channels are currently being tracked.")
         return
 
-    youtube_channels = "\n".join(tracked_youtube) if tracked_youtube else "None"
+    youtube_channels = "\n".join(youtube_list) if youtube_list else "None"
     twitch_channels = "\n".join(tracked_twitch) if tracked_twitch else "None"
     await interaction.response.send_message(f"**YouTube Channels:**\n{youtube_channels}\n\n**Twitch Channels:**\n{twitch_channels}")
 
@@ -207,22 +190,18 @@ async def remove_channel(interaction: nextcord.Interaction, platform: str, chann
     guild_id = interaction.guild.id
     platform = platform.lower()
 
-    if platform == 'youtube' and guild_id in tracked_channels['youtube']:
-        if channel_name in tracked_channels['youtube'][guild_id]:
-            tracked_channels['youtube'][guild_id].remove(channel_name)
+    try:
+        if platform == 'youtube':
+            tracked_channels['youtube'][guild_id] = [ch for ch in tracked_channels['youtube'].get(guild_id, []) if ch['title'] != channel_name]
             await interaction.followup.send(f"Removed YouTube channel: {channel_name}")
-        else:
-            await interaction.followup.send(f"Channel {channel_name} is not being tracked.")
-
-    elif platform == 'twitch' and guild_id in tracked_channels['twitch']:
-        if channel_name.lower() in tracked_channels['twitch'][guild_id]:
+        elif platform == 'twitch':
             tracked_channels['twitch'][guild_id].remove(channel_name.lower())
             await interaction.followup.send(f"Removed Twitch channel: {channel_name}")
         else:
-            await interaction.followup.send(f"Channel {channel_name} is not being tracked.")
-    
-    else:
-        await interaction.followup.send(f"No {platform} channel named '{channel_name}' found in tracking.")
+            await interaction.followup.send(f"Invalid platform: {platform}")
+
+    except ValueError:
+        await interaction.followup.send(f"Channel {channel_name} is not currently being tracked.")
 
 # Command to customize notification messages
 @bot.slash_command(name="set_notification_message", description="Customize the notification message.")
@@ -256,7 +235,8 @@ async def check_streams():
     print("Checking for new YouTube uploads, live streams, and Twitch streams...")
 
     for guild_id, channels in tracked_channels['youtube'].items():
-        for channel_id in channels:
+        for channel in channels:
+            channel_id = channel['id']
             is_video, video_title, video_thumbnail, video_url, video_id = check_video_uploads(channel_id)
 
             if not is_video:
